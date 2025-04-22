@@ -1,171 +1,286 @@
-@@echo off
+@echo off
+REM Readme is at the bottom of the script
 
-REM Choose the option flag
-REM https://wiki.st.com/stm32mpu/wiki/STM32_header_for_binary_files
-REM 
-REM 0x80000000: Header padding enabled
-REM OPTION_FLAG=0x80000000
-REM 0x80000001: Header padding enabled, authentication enabled
-REM SET OPTION_FLAG=0x80000001
-REM 0x80000003: Header padding enabled, authentication enabled, decryption enabled
-REM SET OPTION_FLAG=0x80000003
-REM Initialize option flag and output file name
+setlocal enabledelayedexpansion
 
-SET PROJECT_NAME=
-SET BASE_OPTION_FLAG=0x8000000
-SET FILE_SUFFIX=
-SET /A INDEX_FLAG = 0
+:: Configure tools installation path
+:: stm32tool_path is a necessary variable for STM32_ProgrammingTool_CLI
+set stm32tool_path=C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin
+:: objdump_path is an OPTIONAL variable for arm-none-eabi-objcopy and need manual assignment
+set objdump_path=C:\ST\STM32CubeIDE_1.17.0\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.1.0.202410251130\tools\bin
 
-REM The followings are variables needs manual modification
-SET version=0x00000001
-SET pwd=rot1
+:: The followings are variables (for STM32_ProgrammingTool_CLI) which need manual modification
+set stldrfile_path=%stm32tool_path%\ExternalLoader
+set stldrfile_name=MX66UW1G45G_STM32N6570-DK.stldr
+set programming_bin_with_header_starting_address=0x70000000
+set programming_bin_without_header_starting_address=0x70100400
 
-@REM SET pwd1=../../Keys/publicKey00.pem
-@REM SET pwd2=../../Keys/publicKey01.pem
-@REM SET pwd3=../../Keys/publicKey02.pem
-@REM SET pwd4=../../Keys/publicKey03.pem
-@REM SET pwd5=../../Keys/publicKey04.pem
-@REM SET pwd6=../../Keys/publicKey05.pem
-@REM SET pwd7=../../Keys/publicKey06.pem
-@REM SET pwd8=../../Keys/publicKey07.pem
+:: Set the starting and ending sector for erasing
+set erase_starting_sector=1
+set erase_ending_sector=2
 
-@REM SET prvk=../../Keys/privateKey00.pem
+:: The followings are variables (for STM32_SigningTool_CLI) need manual modification
+set version=0x00000001
+set pwd=rot1
+set key_path=../../../Keys
+set derivation_value=0x7C098AF2
+set encryption_derivation_constant=0x25205f0e
 
-@REM SET derivation_value=0x7C098AF2
-@REM SET enck=../../Keys/OEM_SECRET.bin
+REM ==============================================================================
+REM The followings are FIXED variables (for general flow)
+SET OPTION_FLAG=0x80000000
+REM ==============================================================================
+REM The followings are FIXED variables (for STM32_SigningTool_CLI)
+SET BINARY_TYPE=fsbl
+SET HEADER_VERSION=2.3
+SET PWD1=%key_path%/publicKey00.pem
+SET PWD2=%key_path%/publicKey01.pem
+SET PWD3=%key_path%/publicKey02.pem
+SET PWD4=%key_path%/publicKey03.pem
+SET PWD5=%key_path%/publicKey04.pem
+SET PWD6=%key_path%/publicKey05.pem
+SET PWD7=%key_path%/publicKey06.pem
+SET PWD8=%key_path%/publicKey07.pem
+SET PRVK=%key_path%/privateKey00.pem
+SET ENCK=%key_path%/OEM_SECRET.bin
+SET STM32SIGNINGTOOLCLI=%stm32tool_path%\STM32_SigningTool_CLI.exe
+REM ==============================================================================
+REM The followings are FIXED variables (for STM32_ProgrammingTool_CLI)
+SET STM32PROGRAMMERCLI=%stm32tool_path%\STM32_Programmer_CLI.exe
+SET STLDRFILE=%stldrfile_path%\%stldrfile_name%
+SET STM32PROGRAMMERCLI_CONNECTION_CMD=-c port=SWD mode=UR
+SET STM32PROGRAMMERCLI_ERASE_CMD=-e [%erase_starting_sector% %erase_ending_sector%]
+SET STM32PROGRAMMERCLI_EL_CMD=-el %STLDRFILE%
+REM ==============================================================================
+SET OBJCOPYTOOLCLI=%objdump_path%\arm-none-eabi-objcopy.exe
+REM ==============================================================================
 
-SET pwd1=
-SET pwd2=
-SET pwd3=
-SET pwd4=
-SET pwd5=
-SET pwd6=
-SET pwd7=
-SET pwd8=
-
-SET prvk=
-
-SET derivation_value=
-SET enck=
-
-IF "%~1"=="" (
-    REM no option to sign the image without authentication and generate image_signed-without-authentication.bin
-    SET /A INDEX_FLAG^|=0
-    SET /A CASE^|=0
-    SET FILE_SUFFIX=%FILE_SUFFIX%_signed-without-authentication
-    GOTO PROCESS
-) ELSE IF "%~1"=="help" (
-    REM option "help" to Show help message
-    echo Usage: n6sign.bat [option]
-    echo.
-    echo Options:
-    echo   -enc     - Encrypt the image and generate image_encrypted.bin
-    echo   -auth    - Sign the image with authentication and generate image_authenticated.bin
-    echo   help     - Display this help message
-    echo.
-    echo If no option is provided, the script will sign the image without authentication and generate image_signed-without-authentication.bin.
-    EXIT /B 0
+rem Display help message if no arguments are provided
+if "%~1"=="" (
+    echo goto helpmsg
+    goto helpmsg
 )
 
-REM Parse arguments
-:PARSE_ARGS
-IF "%~1"=="" GOTO :PROCESS
-IF "%~1"=="-enc" (
-    REM option "-enc" to encrypt the image and generate image_encrypted.bin
-    SET /A INDEX_FLAG^|=2
-    @REM SET /A CASE+=2
-    SET FILE_SUFFIX=%FILE_SUFFIX%_encrypted
-    @REM SET /A CASE=CASE+2
+rem Find .elf file if no valid options are given
+:find_elf
+for %%f in (*.elf) do (
+    set PROJECT_NAME=%%~nf
+    goto found_elf
 )
-IF "%~1"=="-auth" (
-    REM option "-auth" to sign the image with authentication and generate image_authenticated.bin
-    SET /A INDEX_FLAG^|=1
-    @REM SET /A CASE+=1
-    SET FILE_SUFFIX=%FILE_SUFFIX%_authentication
-    @REM SET /A CASE=CASE+1
-)
-SHIFT
-GOTO :PARSE_ARGS
+echo Error: No .elf file found in the current directory.
+goto end
 
-:PROCESS
-REM Find the .elf file in the current directory and set its name as PROJECT_NAME
-IF EXIST *.elf (
-    @REM GOTO :FOUND_ELF
-    FOR %%f IN (*.elf) DO (
-        SET PROJECT_NAME=%%~nf
-        GOTO :FOUND_ELF
+:found_elf
+echo Found .elf file: %PROJECT_NAME%.elf
+
+rem checking the existance of %PROJECT_NAME%.bin
+rem if not exist, try to use arm-none-eabi-objcopy to generate it
+if not exist "%PROJECT_NAME%.bin" (
+    echo Warning: %PROJECT_NAME%.bin NOT FOUND in the current directory.
+    
+    rem checking the existance of arm-none-eabi-objcopy
+    if not exist "%OBJCOPYTOOLCLI%" (
+        echo Error: arm-none-eabi-objcopy.exe NOT FOUND in the current directory.
+        echo Please ensure %PROJECT_NAME%.bin is generated by STM32CubeIDE
+        goto end
     )
-) ELSE (
-    ECHO No .elf file found in the current directory.
-    ECHO Please build the project by IDE first!
-    EXIT /B 1
+    echo arm-none-eabi-objcopy.exe FOUND! 
+    echo Trying to generate %PROJECT_NAME%.bin from %PROJECT_NAME%.elf
+    %OBJCOPYTOOLCLI% -O binary %PROJECT_NAME%.elf %PROJECT_NAME%.bin
+
+    rem check again if %PROJECT_NAME%.bin really exists
+    if not exist "%PROJECT_NAME%.bin" (
+        echo Error: %PROJECT_NAME%.bin NOT FOUND in the current directory.
+        echo Error: Failed to generate %PROJECT_NAME%.bin from %PROJECT_NAME%.elf
+        goto end
+    ) 
+)
+echo %PROJECT_NAME%.bin found.
+
+rem Parse arguments
+:parse_args
+if "%~1"=="" goto end_parse_args
+if "%~1"=="auth" (
+        rem authentication only
+        set OPTION_FLAG=0x80000001
+)
+if "%~1"=="enc" (
+        rem authentication and encryption
+        set OPTION_FLAG=0x80000003
+)
+if "%~1"=="sign" (
+    set TASK=sign
+    set TOOL="%STM32SIGNINGTOOLCLI%"
+)
+if "%~1"=="dump" (
+    set TASK=dump
+    set TOOL="%STM32SIGNINGTOOLCLI%"
+)
+if "%~1"=="prog" (
+    set TASK=prog
+    set TOOL="%STM32PROGRAMMERCLI%"
+)
+if "%~1"=="erase" (
+    set TASK=erase
+    set TOOL="%STM32PROGRAMMERCLI%"
+)
+shift
+goto parse_args
+:end_parse_args
+
+rem Ensure TOOL is set
+if %TOOL%=="" (
+    echo Error: Missing required option 'sign', 'dump', 'prog' or 'erase'.
+    goto end
 )
 
-:FOUND_ELF
-IF EXIST %PROJECT_NAME%.bin (
-    GOTO :FOUND_BIN
-) ELSE (
-    @REM :BIN_NOT_FOUND
-    ECHO No .bin file found in the current directory.
-    ECHO Please build the project by IDE first!
-    EXIT /B 1
+if %TASK%==erase (
+    if "%erase_starting_sector%"=="" (
+        echo Error: Missing required option 'erase_starting_sector'.
+        goto end
+    )
+    if "%erase_ending_sector%"=="" (
+        echo Error: Missing required option 'erase_ending_sector'.
+        goto end
+    )
+    set CMD_OPTION=%STM32PROGRAMMERCLI_CONNECTION_CMD% %STM32PROGRAMMERCLI_EL_CMD% %STM32PROGRAMMERCLI_ERASE_CMD%
+    goto execute_command
 )
 
-:FOUND_BIN
-SET /A CASE=10+INDEX_FLAG
-SET OPTION_FLAG=%BASE_OPTION_FLAG%%INDEX_FLAG%
-SET OUTPUT_FILE=%PROJECT_NAME%%FILE_SUFFIX%
-
-echo CASE=%CASE%
-echo FILE_SUFFIX=%FILE_SUFFIX%
-echo PROJECT_NAME=%PROJECT_NAME%
-echo OPTION_FLAG=%OPTION_FLAG%
-echo OUTPUT_FILE=%OUTPUT_FILE%
-
-REM sign without authentication
-IF "%CASE%"=="10" (
-    @REM ECHO CASE10
-    STM32_SigningTool_CLI.exe -bin %PROJECT_NAME%.bin -nk -of %OPTION_FLAG% -t fsbl -o %OUTPUT_FILE%.bin -hv 2.3 -dump %OUTPUT_FILE%.bin
-    GOTO :EOF
-)
-
-REM sign with authentication 
-IF "%CASE%"=="11" (
-    @REM ECHO CASE11
-    IF "%pwd1%"=="" IF "%pwd2%"=="" IF "%pwd3%"=="" IF "%pwd4%"=="" IF "%pwd5%"=="" IF "%pwd6%"=="" IF "%pwd7%"=="" IF "%pwd8%"=="" IF "%prvk%"=="" (
-        ECHO .
-        ECHO Error!!
-        ECHO Please set the file path for public keys!!
-        ECHO .
-        @REM EXIT /B 1
+echo %PROJECT_NAME%.bin found.
+if !OPTION_FLAG!==0x80000000 (
+    set FILE_SUFFIX=_signed-without-authentication
+    set OUTPUT_FILE=%PROJECT_NAME%!FILE_SUFFIX!
+    
+    if %TASK%==sign (
+        set CMD_OPTION=-bin %PROJECT_NAME%.bin -nk -of !OPTION_FLAG! -t %BINARY_TYPE% -o !OUTPUT_FILE!.bin -hv %HEADER_VERSION% -dump !OUTPUT_FILE!.bin
     ) else (
-        ECHO .
-        ECHO Signing the image with authentication...
-        ECHO pwd1 = %pwd1% 
-        ECHO pwd2 = %pwd2%
-        ECHO pwd3 = %pwd3%
-        ECHO pwd4 = %pwd4%
-        ECHO pwd5 = %pwd5%
-        ECHO pwd6 = %pwd6%
-        ECHO pwd7 = %pwd7%
-        ECHO pwd8 = %pwd8%
-        ECHO prvk = %prvk%
-        ECHO .
-        @REM STM32_SigningTool_CLI.exe -bin H573-DK_Makefile_CMake.bin -pubk ../../Keys/publicKey00.pem ../../Keys/publicKey01.pem ../../Keys/publicKey02.pem ../../Keys/publicKey03.pem ../../Keys/publicKey04.pem ../../Keys/publicKey05.pem ../../Keys/publicKey06.pem../../Keys/publicKey07.pem -prvk ../../Keys/privateKey00.pem -pwd rot1 -t fsbl -iv 0x00000001 -la 0x34180000 -of 0x80000001 -hv 2.3 -o test.bin -dump test.bin
-        STM32_SigningTool_CLI.exe -bin %PROJECT_NAME%.bin -pubk %pwd1% %pwd2% %pwd3% %pwd4% %pwd5% %pwd6% %pwd7% %pwd8% -prvk %prvk% -pwd %pwd% -t fsbl -iv %version% -la 0x34180000 -of 0x80000001 -hv 2.3 -o %OUTPUT_FILE%.bin -dump %OUTPUT_FILE%.bin
+        if exist "!OUTPUT_FILE!.bin" (
+            if %TASK%==prog (
+                set CMD_OPTION=%STM32PROGRAMMERCLI_CONNECTION_CMD% %STM32PROGRAMMERCLI_EL_CMD% --download !OUTPUT_FILE!.bin %programming_bin_with_header_starting_address%
+            ) else if %TASK%==dump (
+                set CMD_OPTION=-dump !OUTPUT_FILE!.bin
+            )
+        ) else (
+            echo !OUTPUT_FILE!.bin NOT FOUND in the current directory.
+            exit /b 1
+        )
     )
 )
 
-REM encrypt the image and sign the image without authentication
-IF "%CASE%"=="12" (
-    @REM ECHO CASE12
-    IF "%pwd1%"=="" IF "%pwd2%"=="" IF "%pwd3%"=="" IF "%pwd4%"=="" IF "%pwd5%"=="" IF "%pwd6%"=="" IF "%pwd7%"=="" IF "%pwd8%"=="" IF "%prvk%"=="" IF "%derivation_value%"=="" IF "%enck%"=="" (
+if !OPTION_FLAG!==0x80000001 (
+    set FILE_SUFFIX=_signed-authentication
+    set OUTPUT_FILE=%PROJECT_NAME%!FILE_SUFFIX!
+
+    if %TASK%==sign (
+        rem Check if PWD1 to PWD8 exist
+        for %%i in (PWD1 PWD2 PWD3 PWD4 PWD5 PWD6 PWD7 PWD8 PRVK ENCK) do (
+            if not exist "!%%i!" (
+                echo File not found: !%%i!
+                goto end
+            )
+        )
+        echo All required keys found.
+        set CMD_OPTION=-bin %PROJECT_NAME%.bin -pubk %PWD1% %PWD2% %PWD3% %PWD4% %PWD5% %PWD6% %PWD7% %PWD8% -PRVK %PRVK% -PWD %pwd% -t %BINARY_TYPE% -iv %version% -la 0x34180000 -of !OPTION_FLAG! -hv %HEADER_VERSION% -o !OUTPUT_FILE!.bin -dump !OUTPUT_FILE!.bin
     ) else (
-
+        if exist "!OUTPUT_FILE!.bin" (
+            if %TASK%==prog (
+                set CMD_OPTION=%STM32PROGRAMMERCLI_CONNECTION_CMD% %STM32PROGRAMMERCLI_EL_CMD% --download !OUTPUT_FILE!.bin %programming_bin_with_header_starting_address%
+            ) else if %TASK%==dump (
+                set CMD_OPTION=-dump !OUTPUT_FILE!.bin
+            )
+        ) else (
+            echo !OUTPUT_FILE!.bin NOT FOUND in the current directory.
+            exit /b 1
+        )
     )
 )
 
-REM encrypt and sign the image with authentication
-IF "%CASE%"=="13" (
-    @REM ECHO CASE13
+if !OPTION_FLAG!==0x80000003 (
+    set FILE_SUFFIX=_signed-authentication-encrypted
+    set OUTPUT_FILE=%PROJECT_NAME%!FILE_SUFFIX!
+
+    if %TASK%==sign (
+        rem Check if PWD1 to PWD8 exist
+        for %%i in (PWD1 PWD2 PWD3 PWD4 PWD5 PWD6 PWD7 PWD8 PRVK ENCK) do (
+            if not exist "!%%i!" (
+                echo File not found: !%%i!
+                goto end
+            )
+        )
+        echo All required keys found.
+        set CMD_OPTION=-bin %PROJECT_NAME%.bin -pubk %PWD1% %PWD2% %PWD3% %PWD4% %PWD5% %PWD6% %PWD7% %PWD8% -prvk %PRVK% -pwd %pwd% -t %BINARY_TYPE% -iv %version% -la 0x34180000 -encdc %encryption_derivation_constant% -enck "%ENCK%" -of !OPTION_FLAG! -hv %HEADER_VERSION% -o !OUTPUT_FILE!.bin -dump !OUTPUT_FILE!.bin
+    ) else (
+        if exist "!OUTPUT_FILE!.bin" (
+            if %TASK%==prog (
+                set CMD_OPTION=%STM32PROGRAMMERCLI_CONNECTION_CMD% %STM32PROGRAMMERCLI_EL_CMD% --download !OUTPUT_FILE!.bin %programming_bin_with_header_starting_address%
+            ) else if %TASK%==dump (
+                set CMD_OPTION=-dump !OUTPUT_FILE!.bin
+            )
+        ) else (
+            echo !OUTPUT_FILE!.bin NOT FOUND in the current directory.
+            exit /b 1
+        )
+    )
 )
+
+:execute_command
+rem Execute the command with the condition
+echo %TOOL% %CMD_OPTION%
+%TOOL% %CMD_OPTION%
+goto end
+
+:helpmsg
+echo "Usage: n6helper.bat [sign|dump|prog|erase] [enc] [auth]"
+echo.
+echo Example: Display help message if no arguments are provided
+echo Usage: n6helper
+echo.
+echo Example: Sign the binary without authentication and encryption
+echo Usage: n6helper sign
+echo.
+echo Example: Sign the binary with authentication only
+echo Usage: n6helper sign auth
+echo Usage: n6helper auth sign
+echo.
+echo Example: Sign the binary with authentication and encryption
+echo Usage: n6helper sign enc
+echo Usage: n6helper enc sign
+echo.
+echo Example: Dump the header of binary without authenticaion and encryption
+echo Usage: n6helper dump
+echo.
+echo Example: Dump the header of binary with authentication only
+echo Usage: n6helper dump auth
+echo Usage: n6helper auth dump
+echo.
+echo Example: Dump the header of binary with authentication and encryption
+echo Usage: n6helper dump enc
+echo Usage: n6helper enc dump
+echo.
+echo Example: Program the binary without authentication and encryption
+echo Usage: n6helper prog
+echo NOTE: The starting address for programming need to be set in the script:
+echo       - programming_bin_with_header_starting_address
+echo.
+echo Example: Program the binary with authentication only
+echo Usage: n6helper prog auth
+echo Usage: n6helper auth prog
+echo NOTE: The starting address for programming need to be set in the script:
+echo       - programming_bin_with_header_starting_address
+echo.
+echo Example: Program the binary with authentication and encryption
+echo Usage: n6helper prog enc
+echo Usage: n6helper enc prog
+echo NOTE: The starting address for programming need to be set in the script:
+echo       - programming_bin_with_header_starting_address
+echo.
+echo Example: Erase the flash memory from starting sector (default=1) to ending sector (default=2)
+echo n6helper erase
+echo NOTE: The starting and ending sector for erasing need to be set in the script:
+echo       - erase_starting_sector
+echo       - erase_ending_sector 
+echo.
+
+:end
+endlocal
