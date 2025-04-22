@@ -124,6 +124,16 @@ if "%~1"=="erase" (
     set TASK=erase
     set TOOL="%STM32PROGRAMMERCLI%"
 )
+if "%~1"=="elfprog" (
+    set OPTION_FLAG=0x00000000
+    set TASK=elfprog
+    set TOOL="%STM32PROGRAMMERCLI%"
+)
+if "%~1"=="binprog" (
+    set OPTION_FLAG=0x00000000
+    set TASK=binprog
+    set TOOL="%STM32PROGRAMMERCLI%"
+)
 shift
 goto parse_args
 :end_parse_args
@@ -147,7 +157,16 @@ if %TASK%==erase (
     goto execute_command
 )
 
-echo %PROJECT_NAME%.bin found.
+if !OPTION_FLAG!==0x00000000 (
+    if %TASK%==elfprog (
+        set CMD_OPTION=%STM32PROGRAMMERCLI_CONNECTION_CMD% %STM32PROGRAMMERCLI_EL_CMD% --download %PROJECT_NAME%.elf 
+    )
+
+    if %TASK%==binprog (
+        set CMD_OPTION=%STM32PROGRAMMERCLI_CONNECTION_CMD% %STM32PROGRAMMERCLI_EL_CMD% --download %PROJECT_NAME%.bin %programming_bin_without_header_starting_address%
+    )
+)
+
 if !OPTION_FLAG!==0x80000000 (
     set FILE_SUFFIX=_signed-without-authentication
     set OUTPUT_FILE=%PROJECT_NAME%!FILE_SUFFIX!
@@ -231,7 +250,7 @@ echo %TOOL% %CMD_OPTION%
 goto end
 
 :helpmsg
-echo "Usage: n6helper.bat [sign|dump|prog|erase] [enc] [auth]"
+echo "Usage: n6helper.bat [sign | dump | prog | erase] [enc] [auth]"
 echo.
 echo Example: Display help message if no arguments are provided
 echo Usage: n6helper
